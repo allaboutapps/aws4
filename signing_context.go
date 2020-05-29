@@ -3,6 +3,7 @@ package aws4
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,11 @@ import (
 )
 
 var (
+	ErrMalformedSignature        = errors.New("malformed signature")
+	ErrExpiredSignature          = errors.New("expired signature")
+	ErrInvalidSignature          = errors.New("invalid signature")
+	ErrInvalidSignatureAlgorithm = errors.New("invalid signature algorithm")
+
 	ignoredHeaders = map[string]struct{}{
 		"Authorization":   {},
 		"User-Agent":      {},
@@ -43,29 +49,19 @@ type SigningContext struct {
 	canonicalRequest string
 	stringToSign     string
 	signature        string
+
+	origQuery   url.Values
+	timeNowFunc func() time.Time
 }
 
-func (s *SigningContext) cleanupPresign() {
-	if !s.IsPresign {
-		return
+func (s *SigningContext) Build() error {
+	for k := range s.Query {
+		sort.Strings(s.Query[k])
 	}
 
-	s.Query.Del("X-Amz-Algorithm")
-	s.Query.Del("X-Amz-Signature")
-	s.Query.Del("X-Amz-Security-Token")
-	s.Query.Del("X-Amz-Date")
-	s.Query.Del("X-Amz-Expires")
-	s.Query.Del("X-Amz-Credential")
-	s.Query.Del("X-Amz-SignedHeaders")
+	s.cleanupPresign(true)
+	s.sanitizeHost()
 
-	s.Request.URL.RawQuery = s.Query.Encode()
-}
-
-func (s *SigningContext) sanitizeHost() {
-	util.SanitizeHost(s.Request)
-}
-
-func (s *SigningContext) build() error {
 	s.buildBasicQueryValues()
 	s.buildTime()
 	s.buildCredential()
@@ -79,17 +75,75 @@ func (s *SigningContext) build() error {
 	s.buildStringToSign()
 	s.buildSignature()
 
-	if s.IsPresign {
-		s.Request.URL.RawQuery = fmt.Sprintf("%s&X-Amz-Signature=%s", s.Request.URL.RawQuery, s.signature)
-	} else {
-		s.Request.Header.Set("Authorization", strings.Join([]string{
-			fmt.Sprintf("%s Credential=%s/%s", util.Algorithm, s.Credentials.AccessKeyID, s.credentialScope),
-			fmt.Sprintf("SignedHeaders=%s", s.signedHeaders),
-			fmt.Sprintf("Signature=%s", s.signature),
-		}, ", "))
+	return nil
+}
+
+func (s *SigningContext) Parse() error {
+	for k := range s.Query {
+		sort.Strings(s.Query[k])
+	}
+
+	s.cleanupPresign(true)
+	s.sanitizeHost()
+
+	var err error
+
+	if err = s.parseBasicQueryValues(); err != nil {
+		return err
+	}
+	if err = s.parseTime(); err != nil {
+		return err
+	}
+	if err = s.parseCredential(); err != nil {
+		return err
+	}
+	if err = s.buildBodyHash(); err != nil {
+		return err
+	}
+	if err = s.parseCanonicalRequest(); err != nil {
+		return err
+	}
+	if err = s.parseSignature(); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func (s *SigningContext) AddSigToRequest() {
+	if s.IsPresign {
+		s.Request.URL.RawQuery = fmt.Sprintf("%s&X-Amz-Signature=%s", s.Request.URL.RawQuery, s.signature)
+
+		return
+	}
+
+	s.Request.Header.Set("Authorization", strings.Join([]string{
+		fmt.Sprintf("%s Credential=%s/%s", util.Algorithm, s.Credentials.AccessKeyID, s.credentialScope),
+		fmt.Sprintf("SignedHeaders=%s", s.signedHeaders),
+		fmt.Sprintf("Signature=%s", s.signature),
+	}, ", "))
+}
+
+func (s *SigningContext) cleanupPresign(updateRequestURL bool) {
+	if !s.IsPresign {
+		return
+	}
+
+	s.Query.Del("X-Amz-Algorithm")
+	s.Query.Del("X-Amz-Signature")
+	s.Query.Del("X-Amz-Security-Token")
+	s.Query.Del("X-Amz-Date")
+	s.Query.Del("X-Amz-Expires")
+	s.Query.Del("X-Amz-Credential")
+	s.Query.Del("X-Amz-SignedHeaders")
+
+	if updateRequestURL {
+		s.Request.URL.RawQuery = s.Query.Encode()
+	}
+}
+
+func (s *SigningContext) sanitizeHost() {
+	util.SanitizeHost(s.Request)
 }
 
 func (s *SigningContext) buildBasicQueryValues() {
@@ -257,6 +311,189 @@ func (s *SigningContext) buildSignature() {
 	if len(skey) == 0 {
 		return
 	}
+
 	sig := util.HMACSHA256(key, []byte(s.stringToSign))
+
 	s.signature = hex.EncodeToString(sig)
+}
+
+func (s *SigningContext) parseBasicQueryValues() error {
+	if s.IsPresign {
+		if s.origQuery.Get("X-Amz-Algorithm") != util.Algorithm {
+			return ErrInvalidSignatureAlgorithm
+		}
+
+		if s.origQuery.Get("X-Amz-Security-Token") != s.Credentials.SessionToken {
+			return ErrInvalidSignature
+		}
+	} else {
+		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
+		if len(auth) != 3 {
+			return ErrMalformedSignature
+		}
+
+		if !strings.HasPrefix(auth[0], util.Algorithm) {
+			return ErrInvalidSignatureAlgorithm
+		}
+
+		if s.Request.Header.Get("X-Amz-Security-Token") != s.Credentials.SessionToken {
+			return ErrInvalidSignature
+		}
+	}
+
+	s.buildBasicQueryValues()
+
+	return nil
+}
+
+func (s *SigningContext) parseTime() error {
+	var err error
+	if s.IsPresign {
+		s.Time, err = util.ParseDateTime(s.origQuery.Get("X-Amz-Date"))
+		if err != nil {
+			return err
+		}
+
+		exp, err := strconv.ParseInt(s.origQuery.Get("X-Amz-Expires"), 10, 64)
+		if err != nil {
+			return err
+		}
+
+		s.Expiry = time.Duration(exp) * time.Second
+	} else {
+		s.Time, err = util.ParseDateTime(s.Request.Header.Get("X-Amz-Date"))
+		if err != nil {
+			return err
+		}
+	}
+
+	if s.timeNowFunc == nil {
+		s.timeNowFunc = time.Now
+	}
+
+	if s.Expiry > 0 && s.timeNowFunc().After(s.Time.Add(s.Expiry)) {
+		return ErrExpiredSignature
+	}
+
+	s.buildTime()
+
+	return nil
+}
+
+func (s *SigningContext) parseCredential() error {
+	var cred string
+	if s.IsPresign {
+		cred = s.origQuery.Get("X-Amz-Credential")
+		if len(cred) == 0 {
+			return ErrMalformedSignature
+		}
+	} else {
+		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
+		if len(auth) != 3 {
+			return ErrMalformedSignature
+		}
+
+		if len(auth[0]) <= len(util.Algorithm)+1 {
+			return ErrMalformedSignature
+		}
+
+		c := auth[0][len(util.Algorithm)+1:]
+		if !strings.HasPrefix(c, "Credential=") {
+			return ErrMalformedSignature
+		}
+
+		cred = strings.TrimPrefix(c, "Credential=")
+	}
+
+	credParts := strings.Split(cred, "/")
+	if len(credParts) != 5 {
+		return ErrMalformedSignature
+	}
+
+	if credParts[4] != util.RequestTypeAWS4 {
+		return ErrMalformedSignature
+	}
+
+	if s.Credentials.AccessKeyID != credParts[0] {
+		return ErrInvalidSignature
+	}
+
+	s.Region = credParts[2]
+	s.Service = credParts[3]
+	s.credentialScope = strings.Join(credParts[1:], "/")
+
+	if s.IsPresign {
+		s.Query.Set("X-Amz-Credential", fmt.Sprintf("%s/%s", s.Credentials.AccessKeyID, s.credentialScope))
+	}
+
+	return nil
+}
+
+func (s *SigningContext) parseCanonicalRequest() error {
+	var reqSignedHeaders string
+	if s.IsPresign {
+		reqSignedHeaders = s.origQuery.Get("X-Amz-SignedHeaders")
+		if len(reqSignedHeaders) == 0 {
+			return ErrMalformedSignature
+		}
+	} else {
+		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
+		if len(auth) != 3 {
+			return ErrMalformedSignature
+		}
+
+		if !strings.HasPrefix(auth[1], "SignedHeaders=") {
+			return ErrMalformedSignature
+		}
+
+		reqSignedHeaders = strings.TrimPrefix(auth[1], "SignedHeaders=")
+	}
+
+	if len(reqSignedHeaders) == 0 {
+		return ErrMalformedSignature
+	}
+
+	s.buildCanonicalHeaders(ignoredHeaders)
+
+	if reqSignedHeaders != s.signedHeaders {
+		return ErrInvalidSignature
+	}
+
+	s.buildCanonicalRequest()
+
+	return nil
+}
+
+func (s *SigningContext) parseSignature() error {
+	var reqSignature string
+	if s.IsPresign {
+		reqSignature = s.origQuery.Get("X-Amz-Signature")
+		if len(reqSignature) == 0 {
+			return ErrMalformedSignature
+		}
+	} else {
+		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
+		if len(auth) != 3 {
+			return ErrMalformedSignature
+		}
+
+		if !strings.HasPrefix(auth[2], "Signature=") {
+			return ErrMalformedSignature
+		}
+
+		reqSignature = strings.TrimPrefix(auth[2], "Signature=")
+	}
+
+	if len(reqSignature) == 0 {
+		return ErrMalformedSignature
+	}
+
+	s.buildStringToSign()
+	s.buildSignature()
+
+	if reqSignature != s.signature {
+		return ErrInvalidSignature
+	}
+
+	return nil
 }

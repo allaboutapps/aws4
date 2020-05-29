@@ -55,7 +55,7 @@ func buildSigningContext(t *testing.T) *SigningContext {
 		IsPresign: true,
 	}
 
-	sc.cleanupPresign()
+	sc.cleanupPresign(true)
 	sc.sanitizeHost()
 
 	return sc
@@ -322,10 +322,12 @@ func TestSigningContextBuild(t *testing.T) {
 
 	sc := buildSigningContext(t)
 
-	err := sc.build()
+	err := sc.Build()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
+	sc.AddSigToRequest()
 
 	expectedURL := "https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fiam%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-Expires=60&X-Amz-SignedHeaders=content-type%3Bhost%3Bx-amz-date&X-Amz-Signature=63613d9c6a68b0e499ed9beeeabe0c4f3295742554209d6f109fe3c9563f56c3"
 
@@ -396,13 +398,12 @@ func TestSigningContextBuildWithPort(t *testing.T) {
 				IsPresign:   true,
 			}
 
-			sc.cleanupPresign()
-			sc.sanitizeHost()
-
-			err = sc.build()
+			err = sc.Build()
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
+
+			sc.AddSigToRequest()
 
 			if e, g := tt.expectedSig, sc.Request.URL.Query().Get("X-Amz-Signature"); e != g {
 				t.Errorf("%s: expected %q, got %q", tt.name, e, g)
