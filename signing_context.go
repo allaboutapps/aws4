@@ -30,6 +30,11 @@ var (
 	}
 )
 
+const (
+	authHeaderPartsLen = 3
+	credentialPartsLen = 5
+)
+
 type SigningContext struct {
 	Request         *http.Request
 	Body            io.ReadSeeker
@@ -328,7 +333,7 @@ func (s *SigningContext) parseBasicQueryValues() error {
 		}
 	} else {
 		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
-		if len(auth) != 3 {
+		if len(auth) != authHeaderPartsLen {
 			return ErrMalformedSignature
 		}
 
@@ -389,7 +394,7 @@ func (s *SigningContext) parseCredential() error {
 		}
 	} else {
 		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
-		if len(auth) != 3 {
+		if len(auth) != authHeaderPartsLen {
 			return ErrMalformedSignature
 		}
 
@@ -406,7 +411,7 @@ func (s *SigningContext) parseCredential() error {
 	}
 
 	credParts := strings.Split(cred, "/")
-	if len(credParts) != 5 {
+	if len(credParts) != credentialPartsLen {
 		return ErrMalformedSignature
 	}
 
@@ -438,7 +443,7 @@ func (s *SigningContext) parseCanonicalRequest() error {
 		}
 	} else {
 		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
-		if len(auth) != 3 {
+		if len(auth) != authHeaderPartsLen {
 			return ErrMalformedSignature
 		}
 
@@ -473,7 +478,7 @@ func (s *SigningContext) parseSignature() error {
 		}
 	} else {
 		auth := strings.Split(s.Request.Header.Get("Authorization"), ", ")
-		if len(auth) != 3 {
+		if len(auth) != authHeaderPartsLen {
 			return ErrMalformedSignature
 		}
 

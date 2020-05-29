@@ -66,34 +66,6 @@ func TestSignerPresign(t *testing.T) {
 	}
 }
 
-func TestSignerValidatePresigned(t *testing.T) {
-	presignedURL := "https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fiam%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-Expires=60&X-Amz-SignedHeaders=content-type%3Bhost%3Bx-amz-date&X-Amz-Signature=63613d9c6a68b0e499ed9beeeabe0c4f3295742554209d6f109fe3c9563f56c3"
-	req, err := http.NewRequest("GET", presignedURL, nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	signTime, err := time.Parse(util.TimeFormatISO8601DateTime, "20150830T123600Z")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-	req.Header.Set("X-Amz-Date", util.FormatDateTime(signTime))
-
-	signer := aws4.NewSignerWithStaticCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "")
-	signer.TimeNowFunc = func() time.Time { return signTime }
-
-	sc, err := signer.Validate(req)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if e, g := presignedURL, sc.Request.URL.String(); e != g {
-		t.Errorf("expected %q, got %q", e, g)
-	}
-}
-
 func TestSignerValidateSigned(t *testing.T) {
 	signedURL := "https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08"
 	req, err := http.NewRequest("GET", signedURL, nil)
@@ -119,6 +91,34 @@ func TestSignerValidateSigned(t *testing.T) {
 	}
 
 	if e, g := signedURL, sc.Request.URL.String(); e != g {
+		t.Errorf("expected %q, got %q", e, g)
+	}
+}
+
+func TestSignerValidatePresigned(t *testing.T) {
+	presignedURL := "https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fiam%2Faws4_request&X-Amz-Date=20150830T123600Z&X-Amz-Expires=60&X-Amz-SignedHeaders=content-type%3Bhost%3Bx-amz-date&X-Amz-Signature=63613d9c6a68b0e499ed9beeeabe0c4f3295742554209d6f109fe3c9563f56c3"
+	req, err := http.NewRequest("GET", presignedURL, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	signTime, err := time.Parse(util.TimeFormatISO8601DateTime, "20150830T123600Z")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("X-Amz-Date", util.FormatDateTime(signTime))
+
+	signer := aws4.NewSignerWithStaticCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "")
+	signer.TimeNowFunc = func() time.Time { return signTime }
+
+	sc, err := signer.Validate(req)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if e, g := presignedURL, sc.Request.URL.String(); e != g {
 		t.Errorf("expected %q, got %q", e, g)
 	}
 }
