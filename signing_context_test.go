@@ -61,7 +61,7 @@ func buildSigningContext(t *testing.T) *SigningContext {
 		},
 		Region:    "us-east-1",
 		Service:   "iam",
-		Time:      getSignTime(t),
+		SignTime:  getSignTime(t),
 		Expiry:    60 * time.Second,
 		IsPresign: true,
 	}
@@ -184,7 +184,7 @@ func TestSigningContextParseBuildTime(t *testing.T) {
 	expectedTime := "20150830T123600Z"
 	expectedExpiry := "60"
 
-	if e, g := signTime, sc.Time; e != g {
+	if e, g := signTime, sc.SignTime; e != g {
 		t.Errorf("expected %q, got %q", e, g)
 	}
 	if e, g := 60*time.Second, sc.Expiry; e != g {
@@ -416,7 +416,7 @@ func TestSigningContextBuildStringToSign(t *testing.T) {
 	// Manually set values of signing example (without presign) from AWS docs, taken from
 	// https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html (2020-05-27T15:28:30Z)
 	sc = &SigningContext{
-		Time:            getSignTime(t),
+		SignTime:        getSignTime(t),
 		credentialScope: "20150830/us-east-1/iam/aws4_request",
 		canonicalRequest: `GET
 /
@@ -471,9 +471,9 @@ func TestSigningContextBuildSignature(t *testing.T) {
 			AccessKeyID:     "AKIDEXAMPLE",
 			SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 		},
-		Region:  "us-east-1",
-		Service: "iam",
-		Time:    getSignTime(t),
+		Region:   "us-east-1",
+		Service:  "iam",
+		SignTime: getSignTime(t),
 		stringToSign: `AWS4-HMAC-SHA256
 20150830T123600Z
 20150830/us-east-1/iam/aws4_request
@@ -621,7 +621,7 @@ func TestSigningContextBuildSignWithPort(t *testing.T) {
 				Credentials: creds,
 				Region:      "us-east-1",
 				Service:     "es",
-				Time:        signTime,
+				SignTime:    signTime,
 				Expiry:      5 * time.Minute,
 				IsPresign:   false,
 				timeNowFunc: func() time.Time { return signTime },
@@ -698,7 +698,7 @@ func TestSigningContextBuildPresignWithPort(t *testing.T) {
 				Credentials: creds,
 				Region:      "us-east-1",
 				Service:     "es",
-				Time:        signTime,
+				SignTime:    signTime,
 				Expiry:      5 * time.Minute,
 				IsPresign:   true,
 			}

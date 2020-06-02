@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/allaboutapps/aws4"
+	"github.com/allaboutapps/aws4/pkg/credentials"
 	"github.com/allaboutapps/aws4/pkg/util"
 )
 
@@ -82,8 +83,7 @@ func TestSignerValidateSigned(t *testing.T) {
 	req.Header.Set("X-Amz-Date", util.FormatDateTime(signTime))
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7")
 
-	signer := aws4.NewSignerWithStaticCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "")
-	signer.TimeNowFunc = func() time.Time { return signTime }
+	signer := aws4.NewSignerWithTimeNowFunc(credentials.NewStaticProvider("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", ""), func() time.Time { return signTime })
 
 	sc, err := signer.Validate(req)
 	if err != nil {
@@ -110,8 +110,7 @@ func TestSignerValidatePresigned(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("X-Amz-Date", util.FormatDateTime(signTime))
 
-	signer := aws4.NewSignerWithStaticCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "")
-	signer.TimeNowFunc = func() time.Time { return signTime }
+	signer := aws4.NewSignerWithTimeNowFunc(credentials.NewStaticProvider("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", ""), func() time.Time { return signTime })
 
 	sc, err := signer.Validate(req)
 	if err != nil {

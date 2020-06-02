@@ -35,16 +35,27 @@ const (
 	credentialPartsLen = 5
 )
 
+// SigningContext stores information relevant to signing a request
 type SigningContext struct {
-	Request         *http.Request
-	Body            io.ReadSeeker
-	Query           url.Values
-	Credentials     credentials.Credentials
-	Region          string
-	Service         string
-	Time            time.Time
-	Expiry          time.Duration
-	IsPresign       bool
+	// Original HTTP request to sign, will be modified during signing and signature validation
+	Request *http.Request
+	// Body of the request
+	Body io.ReadSeeker
+	// Query of the original HTTP request, used for preparing a presigned signature while processing
+	Query url.Values
+	// Credentials to sign request with or validate against
+	Credentials credentials.Credentials
+	// Region of service request is sent for
+	Region string
+	// Service request is sent for
+	Service string
+	// Signing time for request
+	SignTime time.Time
+	// Expiry of request signature, 0 indicating a signature with no expiry
+	Expiry time.Duration
+	// Indicates whether the request is unsigned
+	IsPresign bool
+	// Toggles whether payload signing should be skipped
 	UnsignedPayload bool
 
 	credentialScope  string
@@ -59,6 +70,11 @@ type SigningContext struct {
 	timeNowFunc func() time.Time
 }
 
+// Build builds a signature for the request using the given signing context.
+//
+// If no error is returned, the signing context's request will have all required values set and can
+// be used to perform a signed request. Should an error be returned instead, discarding the signing
+// context is advised before attempting to build it again since it may contain a half-completed signature.
 func (s *SigningContext) Build() error {
 	for k := range s.Query {
 		sort.Strings(s.Query[k])
@@ -83,6 +99,11 @@ func (s *SigningContext) Build() error {
 	return nil
 }
 
+// Parse parses the signed requests into the given signing context, verifying its signature in the process.
+//
+// If no error is returned, the signing context will have its values filled out and the original request restored,
+// ready to be processed by the consuming party. Should an error be returned instead, discarding the signing
+// context is advised before attempting to build it again since it may contain a half-completed signature.
 func (s *SigningContext) Parse() error {
 	for k := range s.Query {
 		sort.Strings(s.Query[k])
@@ -115,6 +136,8 @@ func (s *SigningContext) Parse() error {
 	return nil
 }
 
+// AddSigToRequest adds the calculated request signature to the request's header or query, depending on whether
+// the request should be signed or presigned.
 func (s *SigningContext) AddSigToRequest() {
 	if s.IsPresign {
 		s.Request.URL.RawQuery = fmt.Sprintf("%s&X-Amz-Signature=%s", s.Request.URL.RawQuery, s.signature)
@@ -129,6 +152,7 @@ func (s *SigningContext) AddSigToRequest() {
 	}, ", "))
 }
 
+// cleanupPresign removes any signature headers for a presigned request so they will not be included in a new signature.
 func (s *SigningContext) cleanupPresign(updateRequestURL bool) {
 	if !s.IsPresign {
 		return
@@ -147,10 +171,13 @@ func (s *SigningContext) cleanupPresign(updateRequestURL bool) {
 	}
 }
 
+// sanitizeHost sanitizes the request's host before signing it.
 func (s *SigningContext) sanitizeHost() {
 	util.SanitizeHost(s.Request)
 }
 
+// buildBasicQueryValues sets the algorithm and security token query values required for presigned requests and
+// adds the security token to the request headers for regular signed requests if defined.
 func (s *SigningContext) buildBasicQueryValues() {
 	if s.IsPresign {
 		s.Query.Set("X-Amz-Algorithm", util.Algorithm)
@@ -169,24 +196,27 @@ func (s *SigningContext) buildBasicQueryValues() {
 	}
 }
 
+// buildTime adds the signing time and optional expiry to the request.
 func (s *SigningContext) buildTime() {
 	if s.IsPresign {
-		s.Query.Set("X-Amz-Date", util.FormatDateTime(s.Time))
+		s.Query.Set("X-Amz-Date", util.FormatDateTime(s.SignTime))
 		s.Query.Set("X-Amz-Expires", strconv.FormatInt(int64(s.Expiry/time.Second), 10))
 	} else {
-		s.Request.Header.Set("X-Amz-Date", util.FormatDateTime(s.Time))
+		s.Request.Header.Set("X-Amz-Date", util.FormatDateTime(s.SignTime))
 	}
 }
 
+// buildCredentialScope builds the credential scope for the signing context.
 func (s *SigningContext) buildCredentialScope() {
 	s.credentialScope = strings.Join([]string{
-		util.FormatDate(s.Time),
+		util.FormatDate(s.SignTime),
 		s.Region,
 		s.Service,
 		util.RequestTypeAWS4,
 	}, "/")
 }
 
+// buildCredential builds the credential scope and adds the credential query param to presigned requests.
 func (s *SigningContext) buildCredential() {
 	s.buildCredentialScope()
 
@@ -195,6 +225,9 @@ func (s *SigningContext) buildCredential() {
 	}
 }
 
+// buildBodyHash sets the body hash for the signing context, using the X-Amz-Context-Sha256 header if available.
+// Should no predefined hash be set, buildBodyHash determines whether a signature should be generated from the
+// request's body and calculates the SHA256 sum if required.
 func (s *SigningContext) buildBodyHash() (err error) {
 	hash := s.Request.Header.Get("X-Amz-Content-Sha256")
 	if len(hash) == 0 {
@@ -239,6 +272,8 @@ func (s *SigningContext) buildBodyHash() (err error) {
 	return nil
 }
 
+// buildCanonicalHeaders creates a canonical form of headers to be signed with the request.
+// All header values will be escaped before serialization.
 func (s *SigningContext) buildCanonicalHeaders(ignoredHeaders map[string]struct{}) {
 	headers := make([]string, 0)
 	headerVals := make(http.Header)
@@ -283,6 +318,8 @@ func (s *SigningContext) buildCanonicalHeaders(ignoredHeaders map[string]struct{
 	s.canonicalHeaders = sb.String()
 }
 
+// buildCanonicalRequest creates a canonical form of the request, including all information required to
+// verify a request, updating the request's URL with the new encoded query.
 func (s *SigningContext) buildCanonicalRequest() {
 	s.Request.URL.RawQuery = strings.Replace(s.Query.Encode(), "+", "%20", -1)
 
@@ -298,20 +335,24 @@ func (s *SigningContext) buildCanonicalRequest() {
 	}, "\n")
 }
 
+// buildStringToSign creates a hash of the canonical request, combining it with information about the algorithm.
+// and credential scope for verification.
 func (s *SigningContext) buildStringToSign() {
 	h := sha256.New()
 	_, _ = h.Write([]byte(s.canonicalRequest))
 
 	s.stringToSign = strings.Join([]string{
 		util.Algorithm,
-		util.FormatDateTime(s.Time),
+		util.FormatDateTime(s.SignTime),
 		s.credentialScope,
 		hex.EncodeToString(h.Sum(nil)),
 	}, "\n")
 }
 
+// buildSignature derives a signing key from the Signer's credentials and creates a HMAC-SHA256 signature
+// of the stringToSign.
 func (s *SigningContext) buildSignature() {
-	key := s.Credentials.DeriveSigningKey(s.Time, s.Region, s.Service)
+	key := s.Credentials.DeriveSigningKey(s.SignTime, s.Region, s.Service)
 	skey := hex.EncodeToString(key)
 	if len(skey) == 0 {
 		return
@@ -322,6 +363,9 @@ func (s *SigningContext) buildSignature() {
 	s.signature = hex.EncodeToString(sig)
 }
 
+// parseBasicQueryValues parses the algorithm and security token values from a request and stores it in
+// the signing context, returning an error if they are missing, malformed or do not match the credentials
+// stored by the Signer.
 func (s *SigningContext) parseBasicQueryValues() error {
 	if s.IsPresign {
 		if s.origQuery.Get("X-Amz-Algorithm") != util.Algorithm {
@@ -351,10 +395,13 @@ func (s *SigningContext) parseBasicQueryValues() error {
 	return nil
 }
 
+// parseTime parses the signing time and optionally expiry from the request, storing them in
+// the signing context. If an expiry has been set, it will be checked against the current time
+// retrieved via the timeNowFunc.
 func (s *SigningContext) parseTime() error {
 	var err error
 	if s.IsPresign {
-		s.Time, err = util.ParseDateTime(s.origQuery.Get("X-Amz-Date"))
+		s.SignTime, err = util.ParseDateTime(s.origQuery.Get("X-Amz-Date"))
 		if err != nil {
 			return err
 		}
@@ -366,7 +413,7 @@ func (s *SigningContext) parseTime() error {
 
 		s.Expiry = time.Duration(exp) * time.Second
 	} else {
-		s.Time, err = util.ParseDateTime(s.Request.Header.Get("X-Amz-Date"))
+		s.SignTime, err = util.ParseDateTime(s.Request.Header.Get("X-Amz-Date"))
 		if err != nil {
 			return err
 		}
@@ -376,7 +423,7 @@ func (s *SigningContext) parseTime() error {
 		s.timeNowFunc = time.Now
 	}
 
-	if s.Expiry > 0 && s.timeNowFunc().After(s.Time.Add(s.Expiry)) {
+	if s.Expiry > 0 && s.timeNowFunc().After(s.SignTime.Add(s.Expiry)) {
 		return ErrExpiredSignature
 	}
 
@@ -385,6 +432,8 @@ func (s *SigningContext) parseTime() error {
 	return nil
 }
 
+// parseCredential parses the credential value of the requests, storing it in the signing
+// context. This sets the context's region and service as well.
 func (s *SigningContext) parseCredential() error {
 	var cred string
 	if s.IsPresign {
@@ -434,6 +483,8 @@ func (s *SigningContext) parseCredential() error {
 	return nil
 }
 
+// parseCanonicalRequest parses the request's canonical request, verifying the signed
+// headers and building a new canonical request to sign.
 func (s *SigningContext) parseCanonicalRequest() error {
 	var reqSignedHeaders string
 	if s.IsPresign {
@@ -469,6 +520,8 @@ func (s *SigningContext) parseCanonicalRequest() error {
 	return nil
 }
 
+// parseSignature parses the request's signature and verifies it against the actual
+// signature calculated for the current signing context.
 func (s *SigningContext) parseSignature() error {
 	var reqSignature string
 	if s.IsPresign {
