@@ -18,9 +18,13 @@ import (
 )
 
 var (
-	ErrMalformedSignature        = errors.New("malformed signature")
-	ErrExpiredSignature          = errors.New("expired signature")
-	ErrInvalidSignature          = errors.New("invalid signature")
+	// ErrMalformedSignature indicates the request does not have a signature or it is malformed
+	ErrMalformedSignature = errors.New("malformed signature")
+	// ErrExpiredSignature indicates the request has a properly formatted signature, but it has expired
+	ErrExpiredSignature = errors.New("expired signature")
+	// ErrInvalidSignature indicates the request has a properly formatted signature, but it is invalid for the credentials provided
+	ErrInvalidSignature = errors.New("invalid signature")
+	// ErrInvalidSignatureAlgorithm indicates the signature algorithm specified in the request does not match the current one
 	ErrInvalidSignatureAlgorithm = errors.New("invalid signature algorithm")
 
 	ignoredHeaders = map[string]struct{}{
