@@ -27,6 +27,11 @@ var (
 	// ErrInvalidSignatureAlgorithm indicates the signature algorithm specified in the request does not match the current one
 	ErrInvalidSignatureAlgorithm = errors.New("invalid signature algorithm")
 
+	includedHeaders = map[string]struct{}{
+		"Content-Type":         {},
+		"X-Amz-Date":           {},
+		"X-Amz-Security-Token": {},
+	}
 	ignoredHeaders = map[string]struct{}{
 		"Authorization":   {},
 		"User-Agent":      {},
@@ -95,7 +100,7 @@ func (s *SigningContext) Build() error {
 		return err
 	}
 
-	s.buildCanonicalHeaders(ignoredHeaders)
+	s.buildCanonicalHeaders(ignoredHeaders, includedHeaders)
 	s.buildCanonicalRequest()
 	s.buildStringToSign()
 	s.buildSignature()
@@ -278,11 +283,14 @@ func (s *SigningContext) buildBodyHash() (err error) {
 
 // buildCanonicalHeaders creates a canonical form of headers to be signed with the request.
 // All header values will be escaped before serialization.
-func (s *SigningContext) buildCanonicalHeaders(ignoredHeaders map[string]struct{}) {
+func (s *SigningContext) buildCanonicalHeaders(ignoredHeaders map[string]struct{}, includedHeaders map[string]struct{}) {
 	headers := make([]string, 0)
 	headerVals := make(http.Header)
 	for k, vv := range s.Request.Header {
 		if _, ok := ignoredHeaders[http.CanonicalHeaderKey(k)]; ok {
+			continue
+		}
+		if _, ok := includedHeaders[http.CanonicalHeaderKey(k)]; !ok {
 			continue
 		}
 
@@ -513,7 +521,7 @@ func (s *SigningContext) parseCanonicalRequest() error {
 		return ErrMalformedSignature
 	}
 
-	s.buildCanonicalHeaders(ignoredHeaders)
+	s.buildCanonicalHeaders(ignoredHeaders, includedHeaders)
 
 	if reqSignedHeaders != s.signedHeaders {
 		return ErrInvalidSignature

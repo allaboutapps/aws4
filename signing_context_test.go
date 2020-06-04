@@ -284,7 +284,7 @@ func TestSigningContextBuildCanonicalHeaders(t *testing.T) {
 
 	sc := buildSigningContext(t)
 
-	sc.buildCanonicalHeaders(ignoredHeaders)
+	sc.buildCanonicalHeaders(ignoredHeaders, includedHeaders)
 
 	expectedSignedHeaders := "content-type;host;x-amz-date"
 	expectedCanonicalHeaders := `content-type:application/x-www-form-urlencoded; charset=utf-8
@@ -315,7 +315,7 @@ func TestSigningContextBuildCanonicalRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	sc.buildCanonicalHeaders(ignoredHeaders)
+	sc.buildCanonicalHeaders(ignoredHeaders, includedHeaders)
 	sc.buildCanonicalRequest()
 
 	expectedCanonicalRequest := `GET
@@ -400,7 +400,7 @@ func TestSigningContextBuildStringToSign(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	sc.buildCanonicalHeaders(ignoredHeaders)
+	sc.buildCanonicalHeaders(ignoredHeaders, includedHeaders)
 	sc.buildCanonicalRequest()
 	sc.buildStringToSign()
 
@@ -453,7 +453,7 @@ func TestSigningContextBuildSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	sc.buildCanonicalHeaders(ignoredHeaders)
+	sc.buildCanonicalHeaders(ignoredHeaders, includedHeaders)
 	sc.buildCanonicalRequest()
 	sc.buildStringToSign()
 	sc.buildSignature()
